@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "FZONE Lampada Acquario BLE",
+        "description": "Seleziona la lampada FZONE rilevata o inserisci l'indirizzo MAC Bluetooth.",
+        "data": {
+          "mac": "Indirizzo MAC Bluetooth",
+          "name": "Nome dispositivo"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Configura {name}",
+        "description": "Vuoi configurare la lampada FZONE all'indirizzo {address}?"
+      }
+    },
+    "abort": {
+      "already_configured": "Questo dispositivo FZONE è già stato configurato."
+    }
+  }
+}

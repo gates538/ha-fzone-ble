@@ -1,0 +1,41 @@
+{
+  "domain": "fzone_ble",
+  "name": "FZONE BLE Aquarium Light",
+  "codeowners": ["@gates538"],
+  "config_flow": true,
+  "dependencies": ["bluetooth"],
+  "documentation": "https://github.com/gates538/ha-fzone-ble",
+  "issue_tracker": "https://github.com/gates538/ha-fzone-ble/issues",
+  "iot_class": "local_polling",
+  "requirements": ["bleak-retry-connector>=3.5.0"],
+  "version": "1.0.0",
+  "bluetooth": [
+    {
+      "service_uuid": "0000ae30-0000-1000-8000-00805f9b34fb"
+    },
+    {
+      "service_uuid": "0000af30-0000-1000-8000-00805f9b34fb"
+    },
+    {
+      "service_uuid": "0000ae3a-0000-1000-8000-00805f9b34fb"
+    },
+    {
+      "service_uuid": "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+    },
+    {
+      "local_name": "SmartAqua*"
+    },
+    {
+      "local_name": "BRITE*"
+    },
+    {
+      "local_name": "FZONE*"
+    },
+    {
+      "local_name": "FZ_*"
+    },
+    {
+      "manufacturer_id": 753
+    }
+  ]
+}
