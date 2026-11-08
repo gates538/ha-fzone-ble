@@ -6,13 +6,15 @@ from typing import Any
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
-    ATTR_RGBW_COLOR,
-    ATTR_RGB_COLOR,
-    ATTR_HS_COLOR,
     ATTR_COLOR_TEMP_KELVIN,
+    ATTR_HS_COLOR,
+    ATTR_RGB_COLOR,
+    ATTR_RGBW_COLOR,
+    ATTR_TRANSITION,
     ATTR_WHITE,
     ColorMode,
     LightEntity,
+    LightEntityFeature,
 )
 import homeassistant.util.color as color_util
 from homeassistant.config_entries import ConfigEntry
@@ -44,6 +46,7 @@ class FzoneLightEntity(LightEntity):
     _attr_name = None
     _attr_color_mode = ColorMode.RGBW
     _attr_supported_color_modes = {ColorMode.RGBW}
+    _attr_supported_features = LightEntityFeature.TRANSITION
     _attr_should_poll = False
 
     def __init__(self, device: FzoneBLEDevice, entry: ConfigEntry) -> None:
@@ -87,9 +90,14 @@ class FzoneLightEntity(LightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the light on, converting any UI color format to RGBW."""
         rgbw = kwargs.get(ATTR_RGBW_COLOR)
-        if rgbw is None and ATTR_RGB_COLOR in kwargs:
+        if rgbw is not None and rgbw == (0, 0, 0, 0):
+            rgbw = (255, 0, 0, 0)
+        elif rgbw is None and ATTR_RGB_COLOR in kwargs:
             r, g, b = kwargs[ATTR_RGB_COLOR]
-            rgbw = (int(r), int(g), int(b), 0)
+            if int(r) == 0 and int(g) == 0 and int(b) == 0:
+                rgbw = (255, 0, 0, 0)
+            else:
+                rgbw = (int(r), int(g), int(b), 0)
         elif rgbw is None and ATTR_HS_COLOR in kwargs:
             hs = kwargs[ATTR_HS_COLOR]
             r, g, b = color_util.color_hs_to_RGB(hs[0], hs[1])
@@ -102,13 +110,15 @@ class FzoneLightEntity(LightEntity):
             rgbw = (0, 0, 0, w)
 
         brightness = kwargs.get(ATTR_BRIGHTNESS)
+        transition = kwargs.get(ATTR_TRANSITION)
 
-        await self._device.async_turn_on(rgbw=rgbw, brightness=brightness)
+        await self._device.async_turn_on(rgbw=rgbw, brightness=brightness, transition=transition)
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the light off."""
-        await self._device.async_turn_off()
+        transition = kwargs.get(ATTR_TRANSITION)
+        await self._device.async_turn_off(transition=transition)
         self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:

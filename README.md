@@ -13,7 +13,8 @@ A custom Home Assistant integration to control **FZONE BLE Aquarium LED Lights**
 ## 🐠 Features
 
 - 💡 **Native Light Entity**: Full integration into Home Assistant's `light` domain.
-- 🎨 **RGBW Color Picker & Brightness Slider**: Complete 4-channel control (Red, Green, Blue, Cold/Warm White).
+- 🎨 **RGBW Color Picker & Brightness Slider**: Complete 4-channel control (Red, Green, Blue, Cold/Warm White) with automatic fallback when turning on from all-zero channels.
+- 🌅 **Smooth Transitions (`LightEntityFeature.TRANSITION`)**: Built-in support for gradual sunrise/sunset and scene transitions (`transition` parameter in `light.turn_on` and `light.turn_off`).
 - 📶 **ESPHome Bluetooth Proxy Support**: Control the lamp seamlessly from anywhere in your home using an inexpensive ESP32 Bluetooth Proxy (e.g., M5Stack Atom Lite).
 - 🔄 **Auto Discovery**: Automatically detects nearby FZONE lamps and prompts for setup in the UI.
 - ⚡ **Ultra Low Latency**: Fast, reliable command execution using `bleak-retry-connector`.

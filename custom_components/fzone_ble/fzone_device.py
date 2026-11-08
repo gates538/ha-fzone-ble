@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from bleak import BleakClient
@@ -50,6 +51,7 @@ class FzoneBLEDevice:
         self._write_char: str | None = None
         self._notify_char: str | None = None
         self._seq: int = 1
+        self._transition_task: asyncio.Task[None] | None = None
 
     def _next_seq(self) -> int:
         """Increment sequence counter, skipping reserved byte 0x5a."""
@@ -98,6 +100,12 @@ class FzoneBLEDevice:
     def _notification_handler(self, sender: Any, data: bytearray) -> None:
         """Handle incoming BLE notifications."""
         _LOGGER.debug("[%s] Notification received: %s", self.address, data.hex(" "))
+
+    def _cancel_transition(self) -> None:
+        """Cancel any active background transition."""
+        if self._transition_task and not self._transition_task.done():
+            self._transition_task.cancel()
+        self._transition_task = None
 
     async def _ensure_connected(self) -> BleakClient:
         """Ensure active BLE connection to the lamp."""
@@ -199,12 +207,30 @@ class FzoneBLEDevice:
         self,
         rgbw: tuple[int, int, int, int] | None = None,
         brightness: int | None = None,
+        transition: float | int | None = None,
     ) -> bool:
-        """Turn on lamp with optional RGBW and brightness."""
-        if rgbw is not None:
-            self._rgbw = rgbw
-        if brightness is not None:
-            self._brightness = brightness
+        """Turn on lamp with optional RGBW, brightness, and smooth transition."""
+        self._cancel_transition()
+
+        target_rgbw = rgbw if rgbw is not None else self._rgbw
+        target_brightness = brightness if brightness is not None else (self._brightness if self._is_on else 255)
+
+        if transition is not None and float(transition) > 0:
+            self._transition_task = self.hass.async_create_task(
+                self._async_run_transition(target_rgbw, target_brightness, float(transition))
+            )
+            return True
+
+        return await self._async_apply_turn_on(target_rgbw, target_brightness)
+
+    async def _async_apply_turn_on(
+        self,
+        target_rgbw: tuple[int, int, int, int],
+        target_brightness: int,
+    ) -> bool:
+        """Apply state immediately without transition."""
+        self._rgbw = target_rgbw
+        self._brightness = target_brightness
 
         b_ratio = self._brightness / 255.0
         r_pct = round((self._rgbw[0] / 255.0) * b_ratio * 100)
@@ -231,8 +257,103 @@ class FzoneBLEDevice:
         await asyncio.sleep(0.04)
         return await self.async_send_packet(p_rgbw)
 
-    async def async_turn_off(self) -> bool:
-        """Turn off lamp (Power OFF and 0% channels)."""
+    async def _async_run_transition(
+        self,
+        target_rgbw: tuple[int, int, int, int],
+        target_brightness: int,
+        transition_seconds: float,
+    ) -> None:
+        """Perform a smooth, gradual transition between current and target state."""
+        start_time = time.monotonic()
+
+        if not self._is_on:
+            start_brightness = 0
+            start_rgbw = target_rgbw
+            p_power_on = build_fzone_packet(0x01, [0x01])
+            p_mode_manual = build_fzone_packet(0x02, [0x00])
+            p_rgbw_zero = build_manual_rgbw_packet(0, 0, 0, 0, co2=self._co2)
+            await self.async_send_packet(p_power_on)
+            await asyncio.sleep(0.04)
+            await self.async_send_packet(p_mode_manual)
+            await asyncio.sleep(0.04)
+            await self.async_send_packet(p_rgbw_zero)
+            self._is_on = True
+            self._notify_callbacks()
+        else:
+            start_brightness = self._brightness
+            start_rgbw = self._rgbw
+
+        step_interval = 5.0 if transition_seconds >= 30.0 else max(0.5, transition_seconds / 20.0)
+
+        _LOGGER.info(
+            "[%s] Starting light transition over %.1fs: Brightness %d -> %d, RGBW %s -> %s (step: %.1fs)",
+            self.address,
+            transition_seconds,
+            start_brightness,
+            target_brightness,
+            start_rgbw,
+            target_rgbw,
+            step_interval,
+        )
+
+        last_notify = start_time
+
+        try:
+            while True:
+                await asyncio.sleep(step_interval)
+                now = time.monotonic()
+                elapsed = now - start_time
+                progress = min(1.0, elapsed / transition_seconds)
+
+                cur_brightness = round(start_brightness + (target_brightness - start_brightness) * progress)
+                cur_r = round(start_rgbw[0] + (target_rgbw[0] - start_rgbw[0]) * progress)
+                cur_g = round(start_rgbw[1] + (target_rgbw[1] - start_rgbw[1]) * progress)
+                cur_b = round(start_rgbw[2] + (target_rgbw[2] - start_rgbw[2]) * progress)
+                cur_w = round(start_rgbw[3] + (target_rgbw[3] - start_rgbw[3]) * progress)
+
+                b_ratio = cur_brightness / 255.0
+                r_pct = round((cur_r / 255.0) * b_ratio * 100)
+                g_pct = round((cur_g / 255.0) * b_ratio * 100)
+                b_pct = round((cur_b / 255.0) * b_ratio * 100)
+                w_pct = round((cur_w / 255.0) * b_ratio * 100)
+
+                self._brightness = cur_brightness
+                self._rgbw = (cur_r, cur_g, cur_b, cur_w)
+
+                p_rgbw = build_manual_rgbw_packet(r_pct, g_pct, b_pct, w_pct, co2=self._co2)
+                await self.async_send_packet(p_rgbw)
+
+                if (now - last_notify) >= 10.0 or progress >= 1.0:
+                    self._notify_callbacks()
+                    last_notify = now
+
+                if progress >= 1.0:
+                    break
+
+            if target_brightness == 0:
+                p_power_off = build_fzone_packet(0x01, [0x00])
+                await self.async_send_packet(p_power_off)
+                self._is_on = False
+                self._notify_callbacks()
+
+            _LOGGER.info("[%s] Light transition completed successfully.", self.address)
+
+        except asyncio.CancelledError:
+            _LOGGER.info("[%s] Light transition cancelled by new command.", self.address)
+            raise
+        except Exception as err:
+            _LOGGER.error("[%s] Error during light transition: %s", self.address, err)
+
+    async def async_turn_off(self, transition: float | int | None = None) -> bool:
+        """Turn off lamp (Power OFF and 0% channels), with optional transition."""
+        self._cancel_transition()
+
+        if transition is not None and float(transition) > 0 and self._is_on:
+            self._transition_task = self.hass.async_create_task(
+                self._async_run_transition(self._rgbw, 0, float(transition))
+            )
+            return True
+
         self._is_on = False
         self._notify_callbacks()
 
@@ -246,6 +367,7 @@ class FzoneBLEDevice:
 
     async def async_disconnect(self) -> None:
         """Disconnect BLE client."""
+        self._cancel_transition()
         async with self._lock:
             if self._client:
                 try:
